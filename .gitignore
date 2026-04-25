@@ -1,0 +1,16 @@
+# Q-SYS design files
+*.qsys
+*.quc
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Temp
+*.tmp
+*.bak
