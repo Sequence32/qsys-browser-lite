@@ -1,7 +1,7 @@
 -- Plugin Info
 PluginInfo = {
   Name = "Browser Lite",
-  Version = "0.1.0",
+  Version = "0.1.2.009",
   BuildVersion = "1.0.0.0",
   Id = "dstn.qsys.browser-lite",
   Author = "Dustin Bennett",
@@ -39,10 +39,17 @@ function GetControls()
 
     -- Content Display
     { Name = "Page_Body", ControlType = "Text", Count = 1, PinStyle = "Output", UserPin = true },
+    { Name = "Content_Prev", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "Content_Next", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "Content_Info", ControlType = "Text", Count = 1, PinStyle = "Output", UserPin = true },
     { Name = "Link_List", ControlType = "Text", Count = 1, PinStyle = "Both", UserPin = true },
     { Name = "Link_Go", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
     { Name = "Image_Display", ControlType = "Text", Count = 4, PinStyle = "Output", UserPin = true },
     { Name = "Image_URL", ControlType = "Text", Count = 4, PinStyle = "Output", UserPin = true },
+    { Name = "Image_Name", ControlType = "Text", Count = 4, PinStyle = "Output", UserPin = true },
+    { Name = "Image_Prev", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "Image_Next", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "Image_Info", ControlType = "Text", Count = 1, PinStyle = "Output", UserPin = true },
 
     -- Request Config
     { Name = "Request_Method", ControlType = "Text", Count = 1, PinStyle = "Both", UserPin = true },
@@ -110,8 +117,14 @@ function GetControlLayout(props)
     local y = 135
 
     -- Content area
-    table.insert(graphics, { Type = "GroupBox", Text = "Page Content", Position = {0, y}, Size = {W, 200}, Color = {30, 30, 30} })
-    layout["Page_Body"] = { Style = "Text", Position = {8, y + 18}, Size = {W - 16, 175} }
+    table.insert(graphics, { Type = "GroupBox", Text = "Page Content", Position = {0, y}, Size = {W, 220}, Color = {30, 30, 30} })
+    -- Paging controls
+    layout["Content_Prev"] = { Style = "Button", Legend = "Up", Position = {8, y + 14}, Size = {36, 20},
+      Color = {60, 60, 60}, OffColor = {35, 35, 35}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    layout["Content_Info"] = { Style = "Text", Position = {48, y + 14}, Size = {100, 20}, FontSize = 10, Color = {150, 150, 150} }
+    layout["Content_Next"] = { Style = "Button", Legend = "Down", Position = {152, y + 14}, Size = {44, 20},
+      Color = {60, 60, 60}, OffColor = {35, 35, 35}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    layout["Page_Body"] = { Style = "Text", Position = {8, y + 38}, Size = {W - 16, 175} }
 
     -- Links
     local ly = y + 205
@@ -122,10 +135,18 @@ function GetControlLayout(props)
 
     -- Images
     local iy = ly + 55
-    table.insert(graphics, { Type = "GroupBox", Text = "Images", Position = {0, iy}, Size = {W, 90}, Color = {30, 30, 30} })
+    table.insert(graphics, { Type = "GroupBox", Text = "Images", Position = {0, iy}, Size = {W, 130}, Color = {30, 30, 30} })
+    -- Prev/Next and counter
+    layout["Image_Prev"] = { Style = "Button", Legend = "<", Position = {8, iy + 14}, Size = {28, 20},
+      Color = {60, 60, 60}, OffColor = {35, 35, 35}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    layout["Image_Info"] = { Style = "Text", Position = {40, iy + 14}, Size = {120, 20}, FontSize = 10, Color = {150, 150, 150} }
+    layout["Image_Next"] = { Style = "Button", Legend = ">", Position = {164, iy + 14}, Size = {28, 20},
+      Color = {60, 60, 60}, OffColor = {35, 35, 35}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    -- Thumbnails
     for i = 1, 4 do
       local ix = 10 + ((i - 1) * 120)
-      layout["Image_Display " .. i] = { Style = "Media", Position = {ix, iy + 16}, Size = {110, 68} }
+      layout["Image_Display " .. i] = { Style = "Media", Position = {ix, iy + 38}, Size = {110, 68} }
+      layout["Image_Name " .. i] = { Style = "Text", Position = {ix, iy + 108}, Size = {110, 16}, FontSize = 8, Color = {120, 120, 120} }
     end
 
   elseif page == 2 then
@@ -225,7 +246,11 @@ if Controls then
     if not str then return "" end
     local entities = { ["&amp;"] = "&", ["&lt;"] = "<", ["&gt;"] = ">", ["&quot;"] = '"', ["&#39;"] = "'", ["&nbsp;"] = " " }
     for ent, char in pairs(entities) do str = str:gsub(ent, char) end
-    str = str:gsub("&#(%d+);", function(n) return string.char(tonumber(n)) end)
+    str = str:gsub("&#(%d+);", function(n)
+      local num = tonumber(n)
+      if num and num >= 0 and num <= 255 then return string.char(num) end
+      return ""
+    end)
     return str
   end
 
@@ -257,15 +282,15 @@ if Controls then
     end
   end
 
-  local function parse_set_cookie(header, domain)
-    if not header then return end
-    local name, value = header:match("^([^=]+)=([^;]*)")
+  local function parse_one_cookie(header_str, domain)
+    if type(header_str) ~= "string" or header_str == "" then return end
+    local name, value = header_str:match("^([^=]+)=([^;]*)")
     if not name then return end
-    local cookie = { name = name:match("^%s*(.-)%s*$"), value = value, domain = domain, path = "/" }
-    local d = header:match("[Dd]omain=([^;]+)")
-    if d then cookie.domain = d:match("^%s*%.?(.-)%s*$") end
-    local p = header:match("[Pp]ath=([^;]+)")
-    if p then cookie.path = p:match("^%s*(.-)%s*$") end
+    local cookie = { name = name:match("^%s*(.-)%s*$") or name, value = value or "", domain = domain, path = "/" }
+    local d = header_str:match("[Dd]omain=([^;]+)")
+    if d then cookie.domain = d:match("^%s*%.?(.-)%s*$") or d end
+    local p = header_str:match("[Pp]ath=([^;]+)")
+    if p then cookie.path = p:match("^%s*(.-)%s*$") or p end
     -- Replace existing cookie with same name+domain
     for i, c in ipairs(cookies) do
       if c.name == cookie.name and c.domain == cookie.domain then
@@ -276,6 +301,17 @@ if Controls then
     end
     table.insert(cookies, cookie)
     save_cookies()
+  end
+
+  local function parse_set_cookie(header, domain)
+    if not header then return end
+    if type(header) == "table" then
+      for _, v in ipairs(header) do
+        parse_one_cookie(v, domain)
+      end
+    else
+      parse_one_cookie(header, domain)
+    end
   end
 
   local function get_cookie_header(url)
@@ -328,18 +364,107 @@ if Controls then
     return links
   end
 
-  local function extract_images(html, base_url)
+  local function extract_images_all(html, base_url)
     local images = {}
     local seen = {}
-    for src in html:gmatch('<img[^>]+src=["\'](.-)["\']') do
-      local full = resolve_url(base_url, html_decode(src))
+
+    local function add_image(url)
+      if not url or url == "" then return end
+      if url:match("^data:") then return end
+      if url:sub(1, 2) == "//" then
+        local p = parse_url(base_url)
+        url = (p and p.protocol or "https") .. ":" .. url
+      end
+      local full = resolve_url(base_url, html_decode(url))
       if not seen[full] and full:match("^https?://") then
+        if full:match("1x1") or full:match("pixel") or full:match("spacer") then return end
         seen[full] = true
         table.insert(images, full)
-        if #images >= 4 then break end
       end
     end
+
+    -- 1. og:image
+    for meta in html:gmatch("<meta([^>]+)>") do
+      if meta:match('og:image') then
+        local content = meta:match('content="([^"]+)"') or meta:match("content='([^']+)'")
+        if content then add_image(content) end
+      end
+    end
+
+    -- 2. img tags
+    for tag in html:gmatch("<img([^>]+)>") do
+      local src = tag:match('data%-src="([^"]+)"') or tag:match("data%-src='([^']+)'")
+        or tag:match('data%-lazy%-src="([^"]+)"') or tag:match("data%-lazy%-src='([^']+)'")
+      if not src then
+        src = tag:match('src="([^"]+)"') or tag:match("src='([^']+)'")
+      end
+      if not src then
+        local srcset = tag:match('srcset="([^"]+)"') or tag:match("srcset='([^']+)'")
+        if srcset then src = srcset:match("([^%s,]+)") end
+      end
+      if src then add_image(src) end
+      if #images >= 50 then break end
+    end
+
     return images
+  end
+
+  -- Get filename from URL for display
+  local function image_filename(url)
+    if not url or url == "" then return "" end
+    local name = url:match("([^/]+)$") or url
+    name = name:match("^([^?#]+)") or name  -- strip query string
+    if #name > 30 then name = "..." .. name:sub(-27) end
+    return name
+  end
+
+  -- Image paging state
+  local all_images = {}
+  local image_offset = 0
+
+  -- Content paging state
+  local full_content = ""
+  local content_offset = 0
+  local CONTENT_PAGE_SIZE = 2000  -- chars per page
+
+  -- Update 4 image slots from all_images at current offset
+  local function update_image_display()
+    local total = #all_images
+    for i = 1, 4 do
+      local idx = image_offset + i
+      if idx <= total then
+        local url = all_images[idx]
+        Controls.Image_URL[i].String = url
+        Controls.Image_Name[i].String = image_filename(url)
+        Controls.Image_Display[i].String = '{"Protocol":"Image","URLs":["' .. url .. '"]}'
+      else
+        Controls.Image_URL[i].String = ""
+        Controls.Image_Name[i].String = ""
+        Controls.Image_Display[i].String = ""
+      end
+    end
+    if total > 0 then
+      local first = image_offset + 1
+      local last = math.min(image_offset + 4, total)
+      Controls.Image_Info.String = first .. "-" .. last .. " of " .. total
+    else
+      Controls.Image_Info.String = "No images"
+    end
+  end
+
+  -- Update Page_Body with current content page
+  local function update_content_display()
+    local total_len = #full_content
+    if total_len == 0 then
+      Controls.Page_Body.String = ""
+      Controls.Content_Info.String = ""
+      return
+    end
+    local page_text = full_content:sub(content_offset + 1, content_offset + CONTENT_PAGE_SIZE)
+    Controls.Page_Body.String = page_text
+    local current_page = math.floor(content_offset / CONTENT_PAGE_SIZE) + 1
+    local total_pages = math.ceil(total_len / CONTENT_PAGE_SIZE)
+    Controls.Content_Info.String = "Page " .. current_page .. " / " .. total_pages
   end
 
   local function extract_text(html)
@@ -473,6 +598,12 @@ if Controls then
   -- ==========================================
   local navigate -- forward declaration
 
+  -- Helper: header values can be string or table (multiple values from server)
+  local function hdr_to_str(v)
+    if type(v) == "table" then return table.concat(v, ", ") end
+    return tostring(v or "")
+  end
+
   local function http_request(url, method, body, headers, redirect_count, callback)
     if not url or url == "" then return end
     redirect_count = redirect_count or 0
@@ -496,16 +627,30 @@ if Controls then
     is_loading = true
     Controls.Loading.Value = 1
     Controls.Status_Text.String = method .. " " .. url
+    print("[Browser] HTTP " .. method .. " " .. url)
 
     local handler = function(tbl, code, data, err, resp_hdrs)
+      print("[Browser] Response: code=" .. tostring(code) .. " err=" .. tostring(err) .. " dataLen=" .. tostring(data and #data or 0))
+
       -- Process cookies from response
       if resp_hdrs then
         for k, v in pairs(resp_hdrs) do
-          if k:lower() == "set-cookie" then
+          if type(k) == "string" and k:lower() == "set-cookie" then
             parse_set_cookie(v, parsed.host)
           end
         end
         update_cookie_display()
+      end
+
+      -- Handle errors
+      if err and (not code or code == 0) then
+        Controls.Loading.Value = 0
+        is_loading = false
+        Controls.Status_Code.String = "ERR"
+        Controls.Status_Text.String = "Error: " .. tostring(err)
+        Controls.Page_Body.String = "Request failed: " .. tostring(err) .. "\n\nURL: " .. url
+        print("[Browser] Request failed: " .. tostring(err))
+        return
       end
 
       -- Handle redirects
@@ -519,11 +664,15 @@ if Controls then
         local location = nil
         if resp_hdrs then
           for k, v in pairs(resp_hdrs) do
-            if k:lower() == "location" then location = v break end
+            if type(k) == "string" and k:lower() == "location" then
+              location = hdr_to_str(v)
+              break
+            end
           end
         end
         if location then
           location = resolve_url(url, location)
+          print("[Browser] Redirect -> " .. location)
           Controls.Status_Text.String = "Redirect -> " .. location
           local new_method = method
           if code == 303 then new_method = "GET" end
@@ -531,6 +680,8 @@ if Controls then
           return
         end
       end
+
+
 
       Controls.Loading.Value = 0
       is_loading = false
@@ -540,7 +691,7 @@ if Controls then
       local content_type = ""
       if resp_hdrs then
         for k, v in pairs(resp_hdrs) do
-          if k:lower() == "content-type" then content_type = v break end
+          if type(k) == "string" and k:lower() == "content-type" then content_type = hdr_to_str(v) break end
         end
       end
       Controls.Content_Type.String = content_type
@@ -549,7 +700,7 @@ if Controls then
       if resp_hdrs then
         local hdr_lines = {}
         for k, v in pairs(resp_hdrs) do
-          table.insert(hdr_lines, k .. ": " .. tostring(v))
+          table.insert(hdr_lines, tostring(k) .. ": " .. hdr_to_str(v))
         end
         Controls.Response_Headers.String = table.concat(hdr_lines, "\n")
       end
@@ -557,10 +708,20 @@ if Controls then
       if callback then callback(code, data, resp_hdrs, url) end
     end
 
-    if method == "GET" then
-      HttpClient.Download({ Url = url, Headers = headers, Timeout = TIMEOUT, EventHandler = handler })
-    else
-      HttpClient.Upload({ Url = url, Method = method, Headers = headers, Data = body or "", Timeout = TIMEOUT, EventHandler = handler })
+    local ok, request_err = pcall(function()
+      if method == "GET" then
+        HttpClient.Download({ Url = url, Headers = headers, Timeout = TIMEOUT, EventHandler = handler })
+      else
+        HttpClient.Upload({ Url = url, Method = method, Headers = headers, Data = body or "", Timeout = TIMEOUT, EventHandler = handler })
+      end
+    end)
+    if not ok then
+      Controls.Loading.Value = 0
+      is_loading = false
+      Controls.Status_Code.String = "ERR"
+      Controls.Status_Text.String = "HttpClient error: " .. tostring(request_err)
+      Controls.Page_Body.String = "Failed to send request: " .. tostring(request_err)
+      print("[Browser] HttpClient error: " .. tostring(request_err))
     end
   end
 
@@ -580,24 +741,26 @@ if Controls then
 
     if ct:match("json") then
       Controls.Page_Title.String = "[JSON Response]"
-      -- Pretty-print JSON
       local ok, parsed = pcall(rapidjson.decode, data)
       if ok then
-        Controls.Page_Body.String = rapidjson.encode(parsed, { pretty = true }) or data
+        full_content = rapidjson.encode(parsed, { pretty = true }) or data
       else
-        Controls.Page_Body.String = data
+        full_content = data
       end
+      content_offset = 0
+      update_content_display()
       Controls.Link_List.Choices = {}
       current_links = {}
-      for i = 1, 4 do
-        Controls.Image_Display[i].String = ""
-        Controls.Image_URL[i].String = ""
-      end
+      all_images = {}
+      image_offset = 0
+      update_image_display()
 
     elseif ct:match("html") or ct == "" then
       -- Parse HTML
       Controls.Page_Title.String = extract_title(data)
-      Controls.Page_Body.String = extract_text(data):sub(1, 8000)
+      full_content = extract_text(data)
+      content_offset = 0
+      update_content_display()
 
       -- Extract links
       current_links = extract_links(data, current_url)
@@ -607,28 +770,22 @@ if Controls then
       end
       Controls.Link_List.Choices = choices
 
-      -- Extract & display images
-      local images = extract_images(data, current_url)
-      for i = 1, 4 do
-        if images[i] then
-          Controls.Image_URL[i].String = images[i]
-          Controls.Image_Display[i].String = '{"Protocol":"Image","URLs":["' .. images[i] .. '"]}'
-        else
-          Controls.Image_URL[i].String = ""
-          Controls.Image_Display[i].String = ""
-        end
-      end
+      -- Extract images and display first page
+      all_images = extract_images_all(data, current_url)
+      image_offset = 0
+      update_image_display()
 
     else
       -- Plain text or other
       Controls.Page_Title.String = "[" .. Controls.Content_Type.String .. "]"
-      Controls.Page_Body.String = data:sub(1, 8000)
+      full_content = data
+      content_offset = 0
+      update_content_display()
       Controls.Link_List.Choices = {}
       current_links = {}
-      for i = 1, 4 do
-        Controls.Image_Display[i].String = ""
-        Controls.Image_URL[i].String = ""
-      end
+      all_images = {}
+      image_offset = 0
+      update_image_display()
     end
 
     Controls.Status_Text.String = "Done - " .. tostring(code)
@@ -639,11 +796,15 @@ if Controls then
   -- Navigate Function
   -- ==========================================
   navigate = function(url, push_history)
-    if not url or url == "" then return end
+    if not url or url == "" then
+      print("[Browser] Navigate called with empty URL")
+      return
+    end
     -- Auto-prepend https://
     if not url:match("^https?://") then url = "https://" .. url end
     if push_history ~= false then history_push(url) end
     Controls.URL_Bar.String = url
+    print("[Browser] Navigating to: " .. url)
 
     local method = Controls.Request_Method.String
     if method == "" then method = "GET" end
@@ -709,6 +870,34 @@ if Controls then
         navigate(link.url)
         break
       end
+    end
+  end
+
+  Controls.Image_Prev.EventHandler = function()
+    if image_offset >= 4 then
+      image_offset = image_offset - 4
+      update_image_display()
+    end
+  end
+
+  Controls.Image_Next.EventHandler = function()
+    if image_offset + 4 < #all_images then
+      image_offset = image_offset + 4
+      update_image_display()
+    end
+  end
+
+  Controls.Content_Prev.EventHandler = function()
+    if content_offset >= CONTENT_PAGE_SIZE then
+      content_offset = content_offset - CONTENT_PAGE_SIZE
+      update_content_display()
+    end
+  end
+
+  Controls.Content_Next.EventHandler = function()
+    if content_offset + CONTENT_PAGE_SIZE < #full_content then
+      content_offset = content_offset + CONTENT_PAGE_SIZE
+      update_content_display()
     end
   end
 
