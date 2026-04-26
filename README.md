@@ -66,8 +66,4 @@ Advanced request configuration — HTTP method, custom headers (JSON), request b
 
 ## Author
 
-Dustin Bennett — [TEL Systems](https://github.com/Sequence32)
-
-## License
-
-MIT
+Dustin Bennett — [GitHub](https://github.com/Sequence32)
