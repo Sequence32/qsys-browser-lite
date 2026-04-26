@@ -1,7 +1,7 @@
 -- Plugin Info
 PluginInfo = {
   Name = "Browser Lite",
-  Version = "0.2.0.001",
+  Version = "0.2.0.002",
   BuildVersion = "1.0.0.0",
   Id = "dstn.qsys.browser-lite",
   Author = "Dustin Bennett",
@@ -517,6 +517,25 @@ if Controls then
   local RAW_PAGE_SIZE = 2000
   local parsed_json = nil  -- parsed JSON table for queries
 
+  -- Wrap long lines for display in fixed-width text controls
+  local function wrap_text(str, width)
+    if not str then return "" end
+    width = width or 80
+    local result = {}
+    for line in str:gmatch("([^\n]*)\n?") do
+      if #line <= width then
+        table.insert(result, line)
+      else
+        local pos = 1
+        while pos <= #line do
+          table.insert(result, line:sub(pos, pos + width - 1))
+          pos = pos + width
+        end
+      end
+    end
+    return table.concat(result, "\n")
+  end
+
   -- Update Raw_Data display with paging
   local function update_raw_display()
     local total_len = #raw_response
@@ -870,8 +889,19 @@ if Controls then
     Controls.URL_Bar.String = final_url or current_url
     current_url = final_url or current_url
 
-    -- Store raw response for Data Explorer (always)
-    raw_response = data or ""
+    -- Store raw response for Data Explorer
+    -- Pretty-print JSON for readability, wrap other content
+    local raw_ok, raw_parsed = pcall(rapidjson.decode, data)
+    if raw_ok and raw_parsed ~= nil then
+      local pretty_ok, pretty_str = pcall(rapidjson.encode, raw_parsed, { pretty = true })
+      if pretty_ok and pretty_str then
+        raw_response = pretty_str
+      else
+        raw_response = wrap_text(data or "", 80)
+      end
+    else
+      raw_response = wrap_text(data or "", 80)
+    end
     raw_offset = 0
     update_raw_display()
 
@@ -879,9 +909,11 @@ if Controls then
     parsed_json = nil
     Controls.JSON_Path.String = ""
     Controls.JSON_Result.String = ""
-    local json_ok, json_parsed = pcall(rapidjson.decode, data)
-    if json_ok and type(json_parsed) == "table" then
-      parsed_json = json_parsed
+    if raw_ok and type(raw_parsed) == "table" then
+      parsed_json = raw_parsed
+      print("[Browser] JSON parsed OK - " .. tostring(#data) .. " bytes, keys: " .. tostring(#enumerate_keys(raw_parsed, "")))
+    else
+      print("[Browser] JSON parse failed: " .. tostring(raw_parsed) .. " (data starts with: " .. tostring(data and data:sub(1, 40) or "nil") .. ")")
     end
     update_json_keys()
 
