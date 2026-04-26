@@ -1,7 +1,7 @@
 -- Plugin Info
 PluginInfo = {
   Name = "Browser Lite",
-  Version = "0.1.2.009",
+  Version = "0.2.0.004",
   BuildVersion = "1.0.0.0",
   Id = "dstn.qsys.browser-lite",
   Author = "Dustin Bennett",
@@ -69,7 +69,18 @@ function GetControls()
     { Name = "Clear_Cookies", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
 
     -- Persistence
-    { Name = "Saved_Cookies", ControlType = "Text", Count = 1, PinStyle = "None", UserPin = false }
+    { Name = "Saved_Cookies", ControlType = "Text", Count = 1, PinStyle = "None", UserPin = false },
+
+    -- Data Explorer
+    { Name = "Raw_Data", ControlType = "Text", Count = 1, PinStyle = "Output", UserPin = true },
+    { Name = "Raw_Prev", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "Raw_Next", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "Raw_Info", ControlType = "Text", Count = 1, PinStyle = "Output", UserPin = true },
+    { Name = "JSON_Path", ControlType = "Text", Count = 1, PinStyle = "Both", UserPin = true },
+    { Name = "JSON_Query", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true },
+    { Name = "JSON_Result", ControlType = "Text", Count = 1, PinStyle = "Output", UserPin = true },
+    { Name = "JSON_Keys", ControlType = "Text", Count = 1, PinStyle = "Both", UserPin = true },
+    { Name = "JSON_Drill", ControlType = "Button", ButtonType = "Trigger", Count = 1, PinStyle = "Input", UserPin = true }
   }
 end
 
@@ -77,7 +88,8 @@ function GetPages(props)
   return {
     { name = "Browser" },
     { name = "Auth" },
-    { name = "Request" }
+    { name = "Request" },
+    { name = "Data" }
   }
 end
 
@@ -196,6 +208,36 @@ function GetControlLayout(props)
     layout["Status_Text"] = { Style = "Text", Position = {8, ry + 85}, Size = {W - 16, 22} }
     layout["Stop"] = { Style = "Button", Legend = "Stop", Position = {W - 66, ry + 85}, Size = {58, 22},
       Color = {180, 50, 50}, OffColor = {60, 60, 60}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+
+  elseif page == 4 then
+    -- ========== PAGE 4: DATA EXPLORER ==========
+    local y = 135
+
+    -- Raw Data Viewer
+    table.insert(graphics, { Type = "GroupBox", Text = "Raw Response Data", Position = {0, y}, Size = {W, 230}, Color = {30, 30, 30} })
+    layout["Raw_Prev"] = { Style = "Button", Legend = "Up", Position = {8, y + 14}, Size = {36, 20},
+      Color = {60, 60, 60}, OffColor = {35, 35, 35}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    layout["Raw_Info"] = { Style = "Text", Position = {48, y + 14}, Size = {100, 20}, FontSize = 10, Color = {150, 150, 150} }
+    layout["Raw_Next"] = { Style = "Button", Legend = "Down", Position = {152, y + 14}, Size = {44, 20},
+      Color = {60, 60, 60}, OffColor = {35, 35, 35}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    layout["Raw_Data"] = { Style = "Text", Position = {8, y + 38}, Size = {W - 16, 185} }
+
+    -- JSON Query
+    local qy = y + 235
+    table.insert(graphics, { Type = "GroupBox", Text = "JSON Path Query", Position = {0, qy}, Size = {W, 120}, Color = {30, 30, 30} })
+    table.insert(graphics, { Type = "Label", Text = "Path:", Position = {8, qy + 20}, Size = {35, 22}, HTextAlign = "Right", Color = {150, 150, 150} })
+    layout["JSON_Path"] = { Style = "Text", Position = {48, qy + 20}, Size = {W - 130, 22} }
+    layout["JSON_Query"] = { Style = "Button", Legend = "Query", Position = {W - 74, qy + 20}, Size = {58, 22},
+      Color = {0, 120, 215}, OffColor = {30, 30, 30}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
+    table.insert(graphics, { Type = "Label", Text = "Result:", Position = {8, qy + 48}, Size = {35, 22}, HTextAlign = "Right", Color = {150, 150, 150} })
+    layout["JSON_Result"] = { Style = "Text", Position = {48, qy + 48}, Size = {W - 64, 60} }
+
+    -- Key Browser
+    local ky = qy + 125
+    table.insert(graphics, { Type = "GroupBox", Text = "Key Browser", Position = {0, ky}, Size = {W, 55}, Color = {30, 30, 30} })
+    layout["JSON_Keys"] = { Style = "ComboBox", Position = {8, ky + 22}, Size = {W - 90, 22} }
+    layout["JSON_Drill"] = { Style = "Button", Legend = "Drill In", Position = {W - 74, ky + 22}, Size = {58, 22},
+      Color = {0, 150, 80}, OffColor = {30, 30, 30}, UnlinkOffColor = true, FontColor = {255, 255, 255} }
   end
 
   return layout, graphics
@@ -467,6 +509,116 @@ if Controls then
     Controls.Content_Info.String = "Page " .. current_page .. " / " .. total_pages
   end
 
+  -- ==========================================
+  -- Data Explorer Engine
+  -- ==========================================
+  local raw_response = ""
+  local raw_offset = 0
+  local RAW_PAGE_SIZE = 2000
+  local parsed_json = nil  -- parsed JSON table for queries
+
+  -- Wrap long lines for display in fixed-width text controls
+  local function wrap_text(str, width)
+    if not str then return "" end
+    width = width or 80
+    local result = {}
+    for line in str:gmatch("([^\n]*)\n?") do
+      if #line <= width then
+        table.insert(result, line)
+      else
+        local pos = 1
+        while pos <= #line do
+          table.insert(result, line:sub(pos, pos + width - 1))
+          pos = pos + width
+        end
+      end
+    end
+    return table.concat(result, "\n")
+  end
+
+  -- Update Raw_Data display with paging
+  local function update_raw_display()
+    local total_len = #raw_response
+    if total_len == 0 then
+      Controls.Raw_Data.String = ""
+      Controls.Raw_Info.String = ""
+      return
+    end
+    local page_text = raw_response:sub(raw_offset + 1, raw_offset + RAW_PAGE_SIZE)
+    Controls.Raw_Data.String = page_text
+    local current_page = math.floor(raw_offset / RAW_PAGE_SIZE) + 1
+    local total_pages = math.ceil(total_len / RAW_PAGE_SIZE)
+    Controls.Raw_Info.String = "Page " .. current_page .. " / " .. total_pages
+  end
+
+  -- Resolve a dot-notation path into a JSON table
+  -- Supports: "key.subkey.0.field" (0-indexed arrays)
+  local function json_path_resolve(tbl, path)
+    if not tbl or not path or path == "" then return tbl end
+    local current = tbl
+    for segment in path:gmatch("[^%.]+") do
+      if type(current) ~= "table" then return nil end
+      -- Try as array index first (0-indexed)
+      local idx = tonumber(segment)
+      if idx ~= nil then
+        current = current[idx + 1]  -- Lua is 1-indexed
+      else
+        current = current[segment]
+      end
+      if current == nil then return nil end
+    end
+    return current
+  end
+
+  -- Format a value for display
+  local function format_json_value(val)
+    if val == nil then return "(nil)" end
+    if type(val) == "table" then
+      local ok, str = pcall(rapidjson.encode, val, { pretty = true })
+      if ok then return str end
+      return "(table)"
+    end
+    return tostring(val)
+  end
+
+  -- Enumerate keys at a given path level
+  local function enumerate_keys(tbl, path)
+    local target = tbl
+    if path and path ~= "" then
+      target = json_path_resolve(tbl, path)
+    end
+    if type(target) ~= "table" then return {} end
+    local keys = {}
+    -- Check if it's an array (sequential numeric keys)
+    local is_array = (#target > 0)
+    if is_array then
+      for i = 0, #target - 1 do
+        local val = target[i + 1]
+        local type_hint = type(val) == "table" and " {..}" or (" = " .. tostring(val):sub(1, 30))
+        table.insert(keys, tostring(i) .. type_hint)
+      end
+    else
+      for k, v in pairs(target) do
+        local type_hint = type(v) == "table" and " {..}" or (" = " .. tostring(v):sub(1, 30))
+        table.insert(keys, tostring(k) .. type_hint)
+      end
+      table.sort(keys)
+    end
+    return keys
+  end
+
+  -- Update the JSON_Keys dropdown for current path
+  local function update_json_keys()
+    if not parsed_json then
+      Controls.JSON_Keys.Choices = {}
+      return
+    end
+    local path = Controls.JSON_Path.String
+    local keys = enumerate_keys(parsed_json, path)
+    Controls.JSON_Keys.Choices = keys
+  end
+
+
   local function extract_text(html)
     local text = html
     -- Remove script/style blocks
@@ -737,13 +889,63 @@ if Controls then
     Controls.URL_Bar.String = final_url or current_url
     current_url = final_url or current_url
 
+    -- Store raw response for Data Explorer
+    -- Clean data: strip UTF-8 BOM and trim whitespace
+    local clean_data = data or ""
+    -- Strip UTF-8 BOM (EF BB BF)
+    if clean_data:sub(1, 3) == "\xEF\xBB\xBF" then
+      clean_data = clean_data:sub(4)
+    end
+    clean_data = clean_data:match("^%s*(.-)%s*$") or clean_data
+
+    -- Pretty-print JSON for readability, wrap other content
+    local raw_ok, raw_parsed = pcall(rapidjson.decode, clean_data)
+    if raw_ok and raw_parsed ~= nil then
+      local pretty_ok, pretty_str = pcall(rapidjson.encode, raw_parsed, { pretty = true })
+      if pretty_ok and pretty_str then
+        raw_response = pretty_str
+      else
+        raw_response = wrap_text(clean_data, 80)
+      end
+    else
+      raw_response = wrap_text(clean_data, 80)
+    end
+    raw_offset = 0
+    update_raw_display()
+
+    -- Try to parse as JSON for query engine
+    parsed_json = nil
+    Controls.JSON_Path.String = ""
+    if raw_ok and raw_parsed ~= nil then
+      if type(raw_parsed) == "table" then
+        parsed_json = raw_parsed
+        local key_count = 0
+        for _ in pairs(raw_parsed) do key_count = key_count + 1 end
+        Controls.JSON_Result.String = "JSON loaded: " .. key_count .. " top-level keys. Use Key Browser or type a path."
+        print("[Browser] JSON parsed OK - " .. tostring(#clean_data) .. " bytes, " .. key_count .. " keys")
+      else
+        parsed_json = { value = raw_parsed }
+        Controls.JSON_Result.String = "JSON primitive: " .. tostring(raw_parsed)
+        print("[Browser] JSON parsed as primitive: " .. type(raw_parsed))
+      end
+    else
+      -- Show parse failure info in the result field AND debug log
+      local first_bytes = ""
+      for i = 1, math.min(10, #clean_data) do
+        first_bytes = first_bytes .. string.format("%02X ", clean_data:byte(i))
+      end
+      local preview = clean_data:sub(1, 80)
+      Controls.JSON_Result.String = "Not JSON. Data (" .. #clean_data .. " bytes) starts with: " .. preview
+      print("[Browser] JSON parse failed: " .. tostring(raw_parsed) .. " | first bytes: " .. first_bytes)
+    end
+    update_json_keys()
+
     local ct = Controls.Content_Type.String:lower()
 
     if ct:match("json") then
       Controls.Page_Title.String = "[JSON Response]"
-      local ok, parsed = pcall(rapidjson.decode, data)
-      if ok then
-        full_content = rapidjson.encode(parsed, { pretty = true }) or data
+      if parsed_json then
+        full_content = rapidjson.encode(parsed_json, { pretty = true }) or data
       else
         full_content = data
       end
@@ -899,6 +1101,54 @@ if Controls then
       content_offset = content_offset + CONTENT_PAGE_SIZE
       update_content_display()
     end
+  end
+
+  -- Data Explorer handlers
+  Controls.Raw_Prev.EventHandler = function()
+    if raw_offset >= RAW_PAGE_SIZE then
+      raw_offset = raw_offset - RAW_PAGE_SIZE
+      update_raw_display()
+    end
+  end
+
+  Controls.Raw_Next.EventHandler = function()
+    if raw_offset + RAW_PAGE_SIZE < #raw_response then
+      raw_offset = raw_offset + RAW_PAGE_SIZE
+      update_raw_display()
+    end
+  end
+
+  Controls.JSON_Query.EventHandler = function()
+    if not parsed_json then
+      Controls.JSON_Result.String = "No JSON data loaded. Navigate to a URL that returns JSON."
+      return
+    end
+    local path = Controls.JSON_Path.String
+    local result = json_path_resolve(parsed_json, path)
+    Controls.JSON_Result.String = format_json_value(result)
+    update_json_keys()
+    print("[Browser] JSON Query: " .. (path ~= "" and path or "(root)") .. " -> " .. type(result))
+  end
+
+  Controls.JSON_Drill.EventHandler = function()
+    if not parsed_json then return end
+    local selected = Controls.JSON_Keys.String
+    if not selected or selected == "" then return end
+    -- Extract just the key name (before the type hint)
+    local key = selected:match("^(%S+)") or selected
+    -- Strip value previews: "keyname = value" or "keyname {..}"
+    key = key:match("^([^%s]+)") or key
+    local current_path = Controls.JSON_Path.String
+    if current_path ~= "" then
+      Controls.JSON_Path.String = current_path .. "." .. key
+    else
+      Controls.JSON_Path.String = key
+    end
+    -- Auto-query on drill
+    local result = json_path_resolve(parsed_json, Controls.JSON_Path.String)
+    Controls.JSON_Result.String = format_json_value(result)
+    update_json_keys()
+    print("[Browser] Drilled into: " .. Controls.JSON_Path.String)
   end
 
   Controls.Clear_Cookies.EventHandler = function()
