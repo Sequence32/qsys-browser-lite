@@ -1,7 +1,7 @@
 -- Plugin Info
 PluginInfo = {
   Name = "Browser Lite",
-  Version = "0.2.0.003",
+  Version = "0.2.0.004",
   BuildVersion = "1.0.0.0",
   Id = "dstn.qsys.browser-lite",
   Author = "Dustin Bennett",
@@ -916,23 +916,27 @@ if Controls then
     -- Try to parse as JSON for query engine
     parsed_json = nil
     Controls.JSON_Path.String = ""
-    Controls.JSON_Result.String = ""
     if raw_ok and raw_parsed ~= nil then
       if type(raw_parsed) == "table" then
         parsed_json = raw_parsed
-        print("[Browser] JSON parsed OK - " .. tostring(#clean_data) .. " bytes")
+        local key_count = 0
+        for _ in pairs(raw_parsed) do key_count = key_count + 1 end
+        Controls.JSON_Result.String = "JSON loaded: " .. key_count .. " top-level keys. Use Key Browser or type a path."
+        print("[Browser] JSON parsed OK - " .. tostring(#clean_data) .. " bytes, " .. key_count .. " keys")
       else
-        -- JSON returned a primitive (string, number, bool) - wrap it
         parsed_json = { value = raw_parsed }
+        Controls.JSON_Result.String = "JSON primitive: " .. tostring(raw_parsed)
         print("[Browser] JSON parsed as primitive: " .. type(raw_parsed))
       end
     else
-      -- Log first bytes for debugging
+      -- Show parse failure info in the result field AND debug log
       local first_bytes = ""
       for i = 1, math.min(10, #clean_data) do
         first_bytes = first_bytes .. string.format("%02X ", clean_data:byte(i))
       end
-      print("[Browser] JSON parse failed: " .. tostring(raw_parsed) .. " | first bytes: " .. first_bytes .. " | preview: " .. clean_data:sub(1, 60))
+      local preview = clean_data:sub(1, 80)
+      Controls.JSON_Result.String = "Not JSON. Data (" .. #clean_data .. " bytes) starts with: " .. preview
+      print("[Browser] JSON parse failed: " .. tostring(raw_parsed) .. " | first bytes: " .. first_bytes)
     end
     update_json_keys()
 
